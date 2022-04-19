@@ -277,7 +277,7 @@ clean:
 
 ### 文件IO
 
-从内存的角度考虑，输入为从文件到内存，输出为从内存到文件
+从内存的角度考虑，输入为从文件到磁盘，输出为从磁盘到文件
 
 #### 标准C库IO
 
@@ -289,3 +289,172 @@ clean:
 
 - C会调用系统API 
 
+C的IO速度 **高于** Linux的IO速度，C里面有缓冲区
+
+- 缓冲区的存在使得读写磁盘的次数变少了，因此效率增加
+
+![C_Linux_IO](img/C_Linux_IO.jpg)
+
+#### 虚拟地址空间
+
+- 存在的问题
+  - 内存小无法加载多个进程
+  - 进程释放后导致的内存不连续
+
+- 系统会给每一个进程分配一个虚拟地址空间
+  - 32位系统会分配$2^{32}=4 \ GB$的空间
+  - 64位系统分配$2^{48} $的空间
+
+MMU（内存管理单元）进行虚拟地址和物理地址的转换
+
+![VAS](img/VAS.jpg)
+
+#### 文件描述符
+
+![File_Description](img/File_Description.jpg)
+
+进程控制块可以看成一个复杂的结构体，其中包含文件描述符表，是一个数组，默认大小为1024
+
+标准输入输出错误都指向文件 当前终端 /dev/tty（一切皆文件）
+
+### Linux IO
+
+查看Linux函数 `man 2 LinuxfuncitonName`， C函数 `man 3 CfunctionName`
+
+- `open() / close()`
+
+  ```c++
+      #include <sys/types.h>  // 定义了宏
+      #include <sys/stat.h>   // 定义了宏
+      #include <fcntl.h>      // open 在这里面声明
+      
+      // 打开已经存在的文件
+      int open(const char *pathname, int flags);
+      	pathname	: 文件路径
+      	flags		: 访问权限以及其他操作
+          			  O_RDONLY, O_WRONLY, O_RDWR 互斥
+          返回新的文件描述符，失败则返回-1
+          
+      errno 属于Linux系统函数库中的全局变量，记录最近的错误号
+     	perror 属于标准C库，打印errno对应的错误描述
+  
+  	#include <stdio.h>
+         void perror(const char *s);
+        s : 用户描述
+        最终输出 s:xxx(实际错误)
+      
+      // 创建一个文件
+      int open(const char *pathname, int flags, mode_t mode);
+      	flags 	: 上述参数必选而且互斥，可选参数还有O_CREAT
+      	mode 	: 八进制数，表示用户对新文件的操作权限 0777 （八进制数0开头）
+      			  最终权限是 mode & ~umask（root 0022）
+      			  umask 用于抹去某些权限
+      			  每个文件的权限用 10 个字符表示 第一个是文件类型
+      			  后续总共三组依次代表 当前用户 当前用户组 其他
+      			  每一位 代表 r w x
+  
+  ```
+
+- `read() / write()`
+
+  都是相对于内存而言的
+
+  ```c++
+  
+  #include <unistd.h>
+  
+  ssize_t read(int fd, void *buf, size_t count);
+  	fd		: 文件描述符
+  	buf		: 从文件读取数据存放的地方
+  	count	: 数组的大小
+  	
+  	返回 读取到的字节数量，0说明文件已经读取完毕，失败则返回-1并设置errno
+  
+  ssize_t write(int fd, const void *buf, size_t count);
+  	buf		: 带写入数据
+  	count	: 写入数据大小
+  	
+  	返回 写入的字节数量， 0说明没有写入内容， 失败则返回-1并设置error
+  
+  
+  ```
+
+- `lseek()`
+
+  ```c++
+  #include <sys/types.h>
+  #include <unistd.h>
+  
+  off_t lseek(int fd, off_t offset, int whence);
+  	offset 	: 偏移值
+  	whence	: 分别相对于 起始 / 当前 / 结尾 的偏移量
+  			  SEEK_SET 
+                The file offset is set to offset bytes.
+  
+         		  SEEK_CUR 
+                The file offset is set to its current location plus offset bytes.
+  
+  		      SEEK_END 
+                The file offset is set to the size of the file plus offset bytes.
+     返回 文件指针位置
+  ```
+
+  - 用法
+    - 移动文件到起始
+    - 获取文件指针当前位置
+    - 获取文件大小
+    - 拓展文件长度
+
+- `stat() / lstat()`
+
+  ```c++
+  #include <sys/types.h>
+  #include <sys/stat.h>
+  #include <unistd.h>
+  
+  int stat(const char *pathname, struct stat *statbuf);
+  	获取一个文件相关的信息
+      File: text.txt
+    	Size: 1453            Blocks: 8          IO Block: 4096   regular file
+  	Device: 801h/2049d      Inode: 1077085     Links: 1
+  	Access: (0664/-rw-rw-r--)  Uid: ( 1000/     leo)   Gid: ( 1000/     leo)
+  	Access: 2022-04-19 20:11:09.587940906 +0800
+  	Modify: 2022-04-19 20:36:59.151587663 +0800
+  	Change: 2022-04-19 20:36:59.151587663 +0800
+  	Birth: -    
+          
+      statbuf : 传出参数
+      成功则返回 0， 否则 -1并设置errno 
+              
+  int lstat(const char *pathname, struct stat *statbuf);
+  	可以获取 软链接 文件信息
+  
+  struct stat {
+                 dev_t     st_dev;         /* ID of device containing file */
+                 ino_t     st_ino;         /* Inode number */
+                 mode_t    st_mode;        /* File type and mode */
+                 nlink_t   st_nlink;       /* Number of hard links */
+                 uid_t     st_uid;         /* User ID of owner */
+                 gid_t     st_gid;         /* Group ID of owner */
+                 dev_t     st_rdev;        /* Device ID (if special file) */
+                 off_t     st_size;        /* Total size, in bytes */
+                 blksize_t st_blksize;     /* Block size for filesystem I/O */
+                 blkcnt_t  st_blocks;      /* Number of 512B blocks allocated */
+  
+                 /* Since Linux 2.6, the kernel supports nanosecond
+                 precision for the following timestamp fields.
+                 For the details before Linux 2.6, see NOTES. */
+  
+                 struct timespec st_atim;  /* Time of last access */
+                 struct timespec st_mtim;  /* Time of last modification */
+                 struct timespec st_ctim;  /* Time of last status change */
+  
+             #define st_atime st_atim.tv_sec      /* Backward compatibility */
+             #define st_mtime st_mtim.tv_sec
+             #define st_ctime st_ctim.tv_sec
+             };
+  ```
+
+  - `mode_t`
+
+  ![mode_t](img/mode_t.jpg)
