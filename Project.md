@@ -405,7 +405,7 @@ MMU（内存管理单元）进行虚拟地址和物理地址的转换
     - 获取文件大小
     - 拓展文件长度
 
-- `stat() / lstat()`
+- 文件属性相关 `stat() / lstat()`
 
   ```c++
   #include <sys/types.h>
@@ -458,3 +458,436 @@ MMU（内存管理单元）进行虚拟地址和物理地址的转换
   - `mode_t`
 
   ![mode_t](img/mode_t.jpg)
+
+- 文件权限相关 `access() / chmod() / chown() / truncate()`
+
+  ```c++
+  #include <unistd.h>
+  
+  int access(const char *pathname, int mode);
+  
+  	判断 某个文件是否有权限 或者是是否存在
+  	mode : R_OK, W_OK, X_OK, F_OK 分别对应读、写、执行、存在
+      成功返回0，否则-1
+          
+  #include <sys/stat.h>
+  
+  int chmod(const char *pathname, mode_t mode);
+  
+  	修改文件权限
+          
+  #include <unistd.h>
+  
+  int chown(const char *pathname, uid_t owner, gid_t group);
+  
+  	改变一个文件的所有者或者用户组
+      uid,gid 的获取可以通过 /etc/passwd  /etc/group 中查看
+      leo:x:1000:1000:LYs_Ubuntu18,,,:/home/leo:/bin/bash
+          
+      可以通过 useradd 创建用户
+          
+  #include <unistd.h>
+  #include <sys/types.h>
+  
+  int truncate(const char *path, off_t length);
+  
+  	修改文件大小
+          
+      length : 修改后文件大小
+  ```
+
+- 目录操作 `mkdir() / rmdir() / rename() / chdir() / getcwd()`
+
+  ```c++
+  #include <sys/stat.h>
+  #include <sys/types.h>
+  
+  int mkdir(const char *pathname, mode_t mode);
+  
+  
+  #include <unistd.h>
+  
+  int rmdir(const char *pathname);
+  	只能删除空目标
+  
+  
+  #include <stdio.h>
+  
+  int rename(const char *oldpath, const char *newpath);
+  
+  
+  #include <unistd.h>
+  
+  int chdir(const char *path);
+  	修改进程工作目录
+   
+  #include <unistd.h>
+  
+  char *getcwd(char *buf, size_t size);        
+  	获取当前目录
+      buf  : 路径字符串
+      size : buf大小
+      返回 buf 的地址， 实际上是一样的
+  ```
+
+- 目录遍历 `opendir() / readdir() / closedir()`
+
+  ```c++
+  #include <sys/types.h>
+  #include <dirent.h>
+  
+  DIR *opendir(const char *name);
+  	打开目录，返回目录流DIR
+      失败则返回 NULL
+          
+  #include <dirent.h>
+  
+  struct dirent *readdir(DIR *dirp);
+  	读取目录
+      struct dirent 是读取到的信息
+          struct dirent {
+              ino_t          d_ino;       /* Inode number */
+              off_t          d_off;       /* Not an offset; see below */
+              unsigned short d_reclen;    /* Length of this record */
+              unsigned char  d_type;      /* Type of file; not supported
+                                                by all filesystem types */
+              /*
+             	  DT_BLK      This is a block device.
+                DT_CHR      This is a character device.
+                DT_DIR      This is a directory.
+                DT_FIFO     This is a named pipe (FIFO).
+                DT_LNK      This is a symbolic link.
+                DT_REG      This is a regular file.
+                DT_SOCK     This is a UNIX domain socket.
+                DT_UNKNOWN  The file type could not be determined. */
+                  
+              char           d_name[256]; /* Null-terminated filename */
+          };
+          
+  #include <sys/types.h>
+  #include <dirent.h>
+  
+  int closedir(DIR *dirp);
+  	关闭目录，
+  ```
+
+- 文件描述符相关 `dup() / dup2() `
+
+  ```c++
+  #include <unistd.h>
+  
+  int dup(int oldfd);
+  	拷贝文件描述符，指向同一个文件，返回新的文件描述符
+  	失败则返回-1
+  #include <unistd.h>
+  
+  int dup2(int oldfd, int newfd);
+  	重定向文件描述符，使得newfd指向和oldfd相同的文件
+      oldfd必须有效
+      会自动关闭newfd指向的文件
+  ```
+
+- `fcntl`
+
+  复制文件描述符
+
+  设置/获取文件的状态标志
+
+  ```c++
+  #include <unistd.h>
+  #include <fcntl.h>
+  
+  int fcntl(int fd, int cmd, ... /* arg */ );
+  	cmd :
+  		F_DUPFD 复制文件描述符
+  		F_SETFL 打开一个文件之后可以修改文件的读写操作
+  ```
+
+  
+
+## 多进程开发
+
+### 基础知识
+
+- 程序
+
+  程序是一个可执行文件，包含一系列信息，描述如何在运行时创建一个进程
+
+  - 二进制格式标识
+    - 可执行文件格式的元信息 (Linux中ELF)
+  - 机器语言指令
+  - 程序入口地址
+  - 数据 初始化值
+  - 符号表和重定位表
+    - 调试
+    - 运行时的符号解析（动态链接）
+  - 共享库和动态链接信息
+  - 其他信息
+
+- 进程
+
+  正在运行的程序的实例，占用内存和CPU资源，是操作系统动态执行的基本单元，是基本的分配单元，是基本的执行单元
+
+  进程由用户内存空间（虚拟地址空间）和一系列内核数据结构组成
+
+- 单道、多道程序
+
+  计算机内存允许运行的程序数量
+
+  每个进程占据一定时间片（Time Slice），Linux中通常为5-800ms
+
+- 并行（Parallelism） / 并发（Concurrency）
+  - 并行 ： 同一时刻，有多条指令在多个处理器上同时执行
+    - 多处理器，多核
+    - 物理上同时
+  - 并发 ： 同一时刻，只能由一条指令执行，但是多个进程的指令被轮换执行，宏观上有同时执行的效果
+    - 单处理器
+    - 逻辑上同时
+
+- 进程控制块（PCB）
+
+  为了管理进程，内核需要对每个进程所做的事情进行清楚的描述。
+
+  内核会为每个进程分配一个 PCB（又称为进程描述符表），维护进程相关的信息，Linux内核的PCB是用`task_struct`实现的
+
+  - 进程id `pid_t`
+  - 进程状态 : 就绪、运行、挂起、停止
+  - 进程切换时需要保存和恢复的CPU寄存器
+  - 描述虚拟地址空间的信息
+  - 描述控制端的信息
+  - 当前工作目录（cwd）
+  - umask 掩码
+  - 文件描述符表
+  - 和信号相关的信息
+  - uid gid
+  - 会话（Session) 和 进程组 [TCP]
+  - 进程可以使用的资源上限  [TCP]
+
+### 进程
+
+#### 状态
+
+- 状态转换模型
+
+  - 三态模型
+
+    - 就绪态
+      - 进程占有处理器正在运行
+    - 运行态
+      - 进程具备运行条件，等待系统分配处理器以便运行
+      - 只有已经分配了除CPU之外的所有必要资源，只要获得CPU便可立即执行
+      - 可能有多个就绪的进程，形成就绪队列
+    - 阻塞态
+      - wait / sleep 
+      - 不具备运行条件，正在等待某个事件的完成
+        - sleep函数
+        - cin / scanf
+
+    ```mermaid
+    graph LR
+    id1(运行态)--出现等待事件-->id2(阻塞态)
+    id2--等待事件结束-->id3(就绪态)
+    id1--时间片用完了-->id3
+    id3--被调度运行-->id1
+    ```
+
+    
+
+  - 五态模型
+
+    - 新建态
+      - 进程刚刚被创建，尚未进入就绪队列
+    - *就绪态*
+    - *运行态*
+    - *阻塞态*
+    - 终止态
+      - 所有状态都能直接到终止态
+      - 进入终止态的进程以后不再执行，保留在操作系统中等待善后
+      - 一旦其他进程完成对终止态进程的信息抽取之后操作系统将删除该进程
+
+```mermaid
+graph LR
+id1(新建态)--创建进程-->id2(就绪态)
+id2--被调度运行-->id3(运行态)
+id3--时间片用完了-->id2
+id3--终止进程-->id5(终止态)
+id3--等待某件事比如I/O请求-->id4(阻塞态)
+id4--I/O结束或等待的事件发生-->id2
+
+```
+
+- 查看进程
+
+  ```shell
+  *静态显示
+  ps aux / ajx
+  
+  a : 显示终端上所有进程
+  u : 显示进程的详细信息
+  x : 显示没有控制终端的进程
+  j : 列出与作业控制相关的信息
+  ```
+
+  - `aux`
+
+    `USER        PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND`
+
+  - `ajx`
+
+    `PPID    PID   PGID    SID TTY       TPGID STAT   UID   TIME COMMAND`
+
+  STAT参数含义
+
+  | 参数 | 含义                    |
+  | ---- | ----------------------- |
+  | D    | 不可中断                |
+  | R    | 正在运行 / 队列中的进程 |
+  | S    | 处于休眠状态            |
+  | T    | 停止 / 被追踪           |
+  | Z    | 僵尸进程                |
+  | W    | 进入内存交换            |
+  | X    | 死掉进程                |
+  | <    | 高优先级                |
+  | N    | 低优先级                |
+  | s    | 包含子进程              |
+  | +    | 位于前台的进程组        |
+
+```shell
+*实时更新
+top
+-d 更新间隔
+
+排序
+M 内存从大到小
+P CPU
+T 运行时间
+U 用户名
+K 输入PID杀死进程
+```
+
+```shell
+*杀死进程
+
+kill PID
+kill -l 查看信号
+kill -$(SIGNAL) PID 
+	kill -9 PID 强制杀死PID
+killall name 通过进程名字
+
+运行程序最后加上 & 可以后台运行，当前终端不会被阻塞
+```
+
+- 进程号
+  - 进程号唯一 `pid_t` 0~32767 
+  - 任何进程（除init进程外）都是由另一个进程创建（父进程），对应父进程号 PPID
+  - 进程组是一个或多个进程的集合，相互关联，进程组可以接收同一终端的各种信号，关联的进程有一个进程组号（PGID）
+  - 相关函数
+    - `pid_t getpid(void) / pid_t getppid(void) / pid_t getpgid(pid_t pid)`
+
+#### 进程创建
+
+`fork()`
+
+```c++
+#include <sys/types.h>
+#include <unistd.h>
+
+pid_t fork(void);
+	创建子进程
+    返回值会返回两次
+        一次在父进程 	成功：返回子进程的PID 失败：返回-1
+        一次在子进程	返回0
+    通过返回值区分父进程和子进程
+```
+
+- 运行程序之后会生成两个进程运行
+- 创建失败
+  - 当前进程数已经达到系统设置上限 EAGAIN
+  - 内存不足  ENOMEM
+
+- 创建过程
+
+  - 运行程序，生成一个虚拟地址空间，此进程就是后续的（因为还没有执行fork()）父进程
+  - 执行`fork()`，子进程克隆虚拟地址空间
+    - 创建初始用户区与父进程的相同
+      - 后续如果分别做了不同的操作则不同
+      - 栈区的pid变量的值不同
+    - 内核区的 PID 不同
+
+  *两个进程的代码完全相同，只是`fork()`的返回值不同，因此会根据返回值执行不同的代码*
+
+- 深入
+
+  `fork()`是通过写时拷贝（copy-on-write）技术实现的
+
+  执行`fork()`后，内核没有复制整个进程的地址空间，父子进程共享一个地址空间
+
+  - 只有需要写入的时候才会复制地址空间
+
+  - 只读数据则共享地址空间
+
+  `fork`之后父子进程共享文件
+
+#### exec 函数族
+
+函数名称不同，完成功能相似的一系列函数
+
+在当前程序执行的同时执行另一个程序（表面上）
+
+执行成功之后不会返回，调用失败返回-1
+
+```mermaid
+graph TD
+id1(当前进程)-->id2("exec('a.out')")
+id2-->id4( a.out 的用户区替换当前进程的用户区并执行)
+id4--执行失败-->id5(返回-1)
+id4--执行成功-->id6(a.out 执行完毕)
+```
+
+可以看出当前进程被完全替换，所以可以采用`fork()`创建子进程完成`exec()`
+
+```mermaid
+graph TD
+id1(当前进程)-->id2("fork()")
+id2-->id5(继续执行原有进程)
+id2-->id3(子进程)
+id3-->id4("exec(a.out, ...)")
+id4-->id6( a.out 的用户区替换当前进程的用户区并执行)
+id6--执行失败-->id7(返回-1)
+id7-->id8("执行子进程中exec()后的部分")
+```
+
+
+
+```c++
+#include <unistd.h>
+
+extern char **environ;
+
+* int execl(const char *path, const char *arg, ...
+          /* (char  *) NULL */);
+	
+	path :	需要执行的文件的路径(最好使用绝对路径)，也可以是shell命令，需要绝对路径！！
+    arg	 :	可执行文件需要的参数，可以有很多
+        	第一个参数一般写 执行文件的名称
+        	以NULL结束
+    返回 
+        只有出错的时候才返回-1
+	
+* int execlp(const char *file, const char *arg, ...
+           /* (char  *) NULL */);
+	file :	会到环境变量中查找相应可执行文件，如果找到则执行，否则不执行
+
+int execle(const char *path, const char *arg, ...
+           /*, (char *) NULL, char * const envp[] */);
+int execv(const char *path, char *const argv[]);
+int execvp(const char *file, char *const argv[]);
+int execvpe(const char *file, char *const argv[],
+            char *const envp[]);
+
+l(list) 		参数地址列表，空指针结尾
+v(vector)		存有各参数地址的指针数组的地址
+p(path)			按PATH环境变量指定的目录搜索可执行文件
+e(enviroment)	存在环境变量字符串地址的指针数组的地址
+```
+
