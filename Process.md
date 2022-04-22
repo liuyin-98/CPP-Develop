@@ -532,4 +532,100 @@ pid_t waitpid(pid_t pid, int *wstatus, int options);
   
   ```
 
+
+### 有名管道 FIFO
+
+为了解决匿名管道只能用于有亲缘关系的进程间通信，提出了有名管道
+
+以FIFO的文件形式存在于文件系统中，有文件的的实体，打开方式与打开一个普通文件是一样的
+
+- 与 匿名管道 的区别
+
+  - FIFO 有文件实体，文件中的内容存放于内存中（内核缓冲区）
+  - 使用FIFO的进程退出之后，FIFO文件将会保存供后续使用
+
+- `mkfifo`
+
+  - `shell 命令 mkfifo NAME`
+
+  - ```c++
+    #include <sys/types.h>
+    #include <sys/stat.h>
+    
+    int mkfifo(const char *pathname, mode_t mode);
+    	与操作文件相同
+    ```
+
+- 注意事项（与匿名管道类似）
+  - 只读打开管道会阻塞，直到另一个进程为只写打开管道
+  - 只写打开管道会阻塞，直到另一个进程为只读打开管道
+  - 读管道
+    - 管道中有数据，`read()`返回实际字节数
+    - 管道无数据
+      - 写端全部关闭，`read()`返回0
+      - 写端部分打开，`read()`阻塞
+  - 写管道
+    - 读端全部关闭，进程异常终止（`SIGPIPE`）
+    - 读端部分关闭
+      - 管道已满，`write()`阻塞
+      - 管道未满，`write()`返回实际字节数
+
+### 内存映射
+
+内存映射将磁盘文件的数据映射到内存，用户通过修改内存就能修改磁盘文件。
+
+对于一个进程来说，可以将部分文件映射到虚拟地址空间的文件的存储映射部分，对于另一个进程也可以将同样的文件部分映射到其虚拟地址空间的文件的存储映射部分，从而实现进程间通信。
+
+- `mmap() / munmap()`
+
+  ```c++
+  #include <sys/mman.h>
   
+  void *mmap(void *addr, size_t length, int prot, int flags,
+             int fd, off_t offset);
+  	映射一个文件的数据到内存中
+      	addr	: 映射的内存首地址，一般传入NULL让内核选择地址 
+          length	: 映射数据长度，不能为0，一般使用文件的长度（stat / lseek）
+          prot	: 对申请映射区内存的操作权限
+              		PROT_EXEC  Pages may be executed.	
+              		PROT_READ  Pages may be read.
+  			        PROT_WRITE Pages may be written.
+  			        PROT_NONE  Pages may not be accessed.	
+              	如果要操作映射区，一定要有读的权限
+  		flags	: 
+  				MAP_PRIVATE	映射区数据改变不会修改原有文件，会创建一个新的文件（写时拷贝）
+                  MAP_SHARED	映射区数据会自动和磁盘同步（如果需要IPC则需要设置）
+  		fd		: 文件描述符
+              	文件大小不能为0！
+              	open 指定的权限不能和 prot 冲突
+  		offset	: 文件偏移，需要是4k的整数倍
+              
+  	成功则返回内存地址，否则返回 MAP_FAILED （void* 1)
+  int munmap(void *addr, size_t length);
+  	解除映射
+          addr 	: 释放内存的地址
+          length	: 需要释放的内存长度，与mmap的一致
+  
+  ```
+
+  *可以实现任意两个进程的通信*
+
+  *非阻塞*
+
+- 父子进程通信
+
+  - 创建文件
+
+  - 在`fork()`之前创建内存映射区（保证二者的映射区一致）
+  - 创建子进程
+  - 父子共享内存映射区
+
+- 没有关系进程通信
+
+  - 准备一个大小不为0的磁盘文件
+
+  - 进程1 通过该磁盘文件创建内存映射区，返回地址
+
+  - 进程2 同理
+
+    
