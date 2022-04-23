@@ -628,4 +628,258 @@ pid_t waitpid(pid_t pid, int *wstatus, int options);
 
   - 进程2 同理
 
-    
+- 注意事项
+
+  - 可以操作 `mmap` 返回的指针
+  - `open` 使用 `O_RDONLY`，`mmap` 中 `PROT_READ | PROT_WRITE` 会返回错误 `MAP_FAILED`
+  - `offset` 不为`4K` 整数倍 会返回 `MAP_FAILED`
+  - `mmap` 调用失败情况
+    - `length = 0`
+    - `prot`
+      - 和文件不一致
+  - `open` 的时候可以 用 `O_CREAT` 创建文件来创建映射区
+    - 可以，注意文件大小不能为0
+    - 可以通过 `lseek()` 或 `truncate()` 扩展 
+  - `mmap` 后关闭文件描述符，映射区还存在，还是可以操作文件
+
+- 内存映射还可以实现文件复制
+  - 由于操作的是内存，速度比较快
+
+- **匿名映射**
+  - 不需要文件实体
+  - 只能做父子间的IPC
+  - 使用方法
+    - `flags = MAP_ANONYMOUS`
+
+### 信号
+
+信号是某件事件发生时对进程的通知机制，是一种软件中断，是在软件层次上对中断机制的一种模拟，是一种异步通信的方式
+
+- 信号的产生源多半都是内核，引发内核为进程产生信号的各类事件如下：
+  - 对于前台进程，用户可以通过输入特殊的终端字符来给它发送信号。（`Ctrl-C`）
+  - 硬件发生异常（0作为除数）
+  - 系统状态变化（`alarm` 定时器到期产生`SIGALRM`信号 / `wait`）
+  - `kill` 命令或者 `kill`函数
+
+- **信号的特点**
+  - 使用简单（底层实现复杂）
+  - 不能携带大量信息
+  - 满足某个特定条件才能发送
+  - 优先级比较高
+
+可以使用 `kill -l` 查看系统定义的信号列表
+
+- 前 31 个位常规信号，其余为实时信号
+
+  ```shell
+  // 常规信号
+   1) SIGHUP       2) SIGINT       3) SIGQUIT      4) SIGILL       5) SIGTRAP
+   6) SIGABRT      7) SIGBUS       8) SIGFPE       9) SIGKILL     10) SIGUSR1
+  11) SIGSEGV     12) SIGUSR2     13) SIGPIPE     14) SIGALRM     15) SIGTERM
+  16) SIGSTKFLT   17) SIGCHLD     18) SIGCONT     19) SIGSTOP     20) SIGTSTP
+  21) SIGTTIN     22) SIGTTOU     23) SIGURG      24) SIGXCPU     25) SIGXFSZ
+  26) SIGVTALRM   27) SIGPROF     28) SIGWINCH    29) SIGIO       30) SIGPWR
+  31) SIGSYS      
+  
+  // 目前未使用信号
+  34) SIGRTMIN    35) SIGRTMIN+1  36) SIGRTMIN+2  37) SIGRTMIN+3
+  38) SIGRTMIN+4  39) SIGRTMIN+5  40) SIGRTMIN+6  41) SIGRTMIN+7  42) SIGRTMIN+8
+  43) SIGRTMIN+9  44) SIGRTMIN+10 45) SIGRTMIN+11 46) SIGRTMIN+12 47) SIGRTMIN+13
+  48) SIGRTMIN+14 49) SIGRTMIN+15 50) SIGRTMAX-14 51) SIGRTMAX-13 52) SIGRTMAX-12
+  53) SIGRTMAX-11 54) SIGRTMAX-10 55) SIGRTMAX-9  56) SIGRTMAX-8  57) SIGRTMAX-7
+  58) SIGRTMAX-6  59) SIGRTMAX-5  60) SIGRTMAX-4  61) SIGRTMAX-3  62) SIGRTMAX-2
+  63) SIGRTMAX-1  64) SIGRTMAX
+  ```
+
+- 常用信号
+
+  | 名称       | 事件                                                         | 默认动作               |
+  | ---------- | ------------------------------------------------------------ | ---------------------- |
+  | `SIGINT`   | 用户按下`Ctrl-C`，终端向运行中的 由该终端启动的 程序发出此信号 | 终止进程               |
+  | `SIGQUIT`  | 用户按下`Ctrl-\`，终端向运行中的 由该终端启动的 程序发出此信号 | 终止进程               |
+  | `SIGKILL`  | 无条件终止进程，不能被忽略，处理，阻塞                       | 终止任何进程           |
+  | `SIGSEGV`  | 进程进行了无效内存访问（段错误）                             | 终止进程并产生core文件 |
+  | `SIGPIPE`  | 向读端没有打开的管道写数据                                   | 终止进程               |
+  | `SIGCHILD` | 子进程结束/状态改变，父进程会收到该信号                      | 忽略                   |
+  | `SIGCONT`  | 进程如果停止，则是其继续运行                                 | 继续/忽略              |
+  | `SIGSTOP`  | 停止进程的执行。信号不能被忽略，处理，阻塞                   | 停止进程               |
+
+- **信号的默认处理动作**
+  - `Term` 	: 终止进程
+  - `Ign`       : 忽略
+  - `Core`     : 终止进程，生成 Core 文件
+    - 当出现 `Segment fault` 错误后，可以设置 `ulimit -c 1024` ，然后在编译时选择调试信息，在`gdb`中首先输入 `core-file core` 便可定位错误位置
+  - `Stop`     : 暂停当前进程
+  - `Cont`     :  继续执行当前被暂停的进程
+
+- **信号的状态**
+  - 产生
+  - 未决
+  - 递达
+
+- `kill() / raise() / abort()`
+
+  ```c++
+  #include <sys/types.h>
+  #include <signal.h>
+  
+  int kill(pid_t pid, int sig);
+  	给某个进程 / 进程组 pid 发送任何信号 sig
+          pid : 
+   				> 0  : 进程id
+                  = 0  : 当前进程组下的所有进程
+                  = -1 : 发送给每个由权限接收到这个信号的进程
+                  < -1 : 发送给 |pid| 的进程组
+         	sig : 信号编号或宏， 0 表示不发送任何信号
+  
+  int raise(int sig)
+      给当前进程发送信号
+     
+  void abort(void)
+      发送 SIGABRT 信号给当前进程
+  ```
+
+- `alarm()`
+
+  ```c++
+  #include <unistd.h>
+  
+  unsigned int alarm(unsigned int seconds);
+  	设置定时器，时间到了之后会发送 SIGALARM
+      	seconds : 倒计时 时长
+              	  设置为0取消
+          返回  如果是第一次调用则返回0
+                否则返回最近调用的剩余时长
+              e.g.
+               	alarm(10); 返回 0
+  				过了1秒
+  				alarm(5);  返回 9
+  					
+      SIGALARM 默认终止当前进程，每个进程只能有唯一个的定时器
+      不阻塞
+  ```
+
+  程序运行的时间
+
+  - 内核时间
+  - 用户时间
+  - 消耗的时间
+
+  文件I/O操作浪费时间
+
+  *定时器与进程状态无关，无论进程处于哪种状态都会继续*
+
+- `setitimer()`
+
+  可以每隔一段时间完成某项任务
+
+  ```c++
+  #include <sys/time.h>
+  
+  int setitimer(int which, const struct itimerval *new_value,
+                struct itimerval *old_value);
+  	设置定时器，可以替代 alarm，精度是微妙，可以实现周期性定时
+          which 		: 定时以什么时间计时
+                          ITIMER_REAL （常用） 到达时间后发送 SIGALRM
+                          ITIMER_VIRTUAL 		到达时间后发送 SIGVTALRM
+                          ITIMER_PROF
+  		new_value 	: 设置定时器属性 （延迟多久定时，定时间隔）
+  		old_value	: 上一次定时的时间参数 一般NULL
+     	正常返回值
+  
+  		struct itimerval {
+                 struct timeval it_interval; /* Interval for periodic timer */
+                 struct timeval it_value;    /* Time until next expiration */ 
+             };
+  
+  		struct timeval {
+                 time_t      tv_sec;         /* seconds */
+                 suseconds_t tv_usec;        /* microseconds */
+             };
+  ```
+
+  
+
+- **信号捕捉 `signal() / sigaction()`**
+
+  ```c++
+  #include <signal.h>
+  
+  typedef void (*sighandler_t)(int);
+  
+  sighandler_t signal(int signum, sighandler_t handler);
+  	捕捉信号 signum 然后执行 handler
+          signum	: 带捕捉的信号
+          handler : 捕捉后的行为
+              		SIG_IGN : 忽略
+                     	SIG_DFL	: 默认
+                      回调函数  : 内核自动调用
+      成功则返回上一次调用的函数地址，第一次调用则NULL
+      失败 返回 SIG_ERR
+  ```
+
+  *`SIGKILL / SIGSTOP`不能被捕捉，不能被忽略*
+  - 信号集 `sigset_t`
+
+    - 可以用信号集表示多个信号的集合 （可以看作集合，本质上是用位图（位运算）实现的）
+
+    - PCB 中有 阻塞信号集（阻塞信号递达，可以设置） 和 未决信号集（无法设置）
+
+      - 无法直接修改信号集，可以通过自定义集合借助信号集函数进行修改
+      - 阻塞信号集默认不阻塞任何信号
+      - 信号阻塞是暂时的
+
+      ```mermaid
+      flowchart
+      id1("Ctrl-C 产生信号 SIGINT，尚未被处理，处于未决状态") --> id2(查询未决信号集对应标志位)
+      id2 --> id3{标志位为0?}
+      id3-->|"0，不是未决状态"| id4(处理信号)
+      id3-->|"1， 是未决状态"| id5(处理之前查询阻塞信号集)
+      id5-->id6{标志为0?}
+      id6-->|"0, 没有阻塞"|id4
+      id6-->|"1，阻塞"|id7(等待阻塞解除)
+      
+      ```
+
+      ```c++
+      int sigemptyset(sigset_t* set);
+          清空信号集中的信号
+          	set : 传出参数，需要操作的信号集
+      int sigfillset(sigset_t* set); 
+      	将所有信号加入信号集
+              
+      int sigaddset(sigset_t* set, int signum);
+      	加入某一信号
+      
+      int sigdelset(sigset_t* set, int signum);   
+      	删除某一信号
+             
+           以上是一般返回   
+              
+      int sigismember(sigset_t* set, int)
+          判断某个信号是否在信号集中
+          1是，0否
+             
+      ```
+
+      *以上操作都是对自定义的信号集操作*
+
+      **操作系统信号集**
+
+      ```c++
+      int sigpending(sigset_t* set);
+      	获取未决信号集
+              set		: 传出参数，内核数据集中的信息
+      int sigprocmask(int how, const sigset* set, sigset_t* oldset);
+      	获取/设置阻塞信号集
+              how : 	用户信号集为 set，内核信号集为 mask
+      				SIG_BLOCK    用户设置的阻塞信号集添加到内核中     mask |= set
+                      SIG_UNBLOCK	 根据用户设置的数据 解除 内核中的阻塞 mask &= ~set	
+                      SIG_SETMASK  用自定义信号集集替换阻塞信号集       mask = set
+              set    : 用户信号集
+      		oldset : 保存之前内核中的信号集，可以为NULL
+           成功返回0，失败则返回-1 设置错误好 EFAULT EINVAL
+                
+      ```
+
+      
